@@ -1,0 +1,25 @@
+name: mcp_io_mqtt
+description: MQTT v3.1.1 adapter for mcp_io. QoS 0 pub/sub with topic wildcard matching.
+version: 0.1.0
+homepage: https://app-appplayer.github.io/makemind
+repository: https://github.com/app-appplayer/mcp_io_mqtt
+issue_tracker: https://github.com/app-appplayer/mcp_io_mqtt/issues
+
+topics:
+  - io
+  - mcp
+  - mqtt
+  - iot
+  - adapter
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  mcp_io: ^0.1.0
+  mcp_bundle: ^0.3.0
+  meta: ^1.15.0
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.24.0
