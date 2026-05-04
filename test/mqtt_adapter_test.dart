@@ -271,4 +271,118 @@ void main() {
       expect(transport.isClosed, isTrue);
     });
   });
+
+  group('MqttAdapter — capability dispatch (0.2.0)', () {
+    Future<MqttAdapter> connected(InMemoryMqttTransport transport) async {
+      final adapter = MqttAdapter(
+        deviceId: 'broker-1', clientId: 'c',
+        transport: transport,
+      );
+      final fut = adapter.connect();
+      await Future<void>.delayed(Duration.zero);
+      transport.injectIncoming(_connackAccepted());
+      await fut;
+      return adapter;
+    }
+
+    test('mqtt.publish routes to publish path', () async {
+      final transport = InMemoryMqttTransport();
+      final adapter = await connected(transport);
+      final r = await adapter.execute(const Command(
+        action: 'mqtt.publish',
+        target: 'sensors/x',
+        args: {'payload': 'v', 'retain': true},
+      ));
+      expect(r.status, CommandStatus.completed);
+      final parsed = transport.parseSent(1);
+      expect(parsed.packetType, MqttPacketType.publish);
+      final pub = MqttPublish.fromBody(parsed.headerByte, parsed.body);
+      expect(pub.topic, 'sensors/x');
+      expect(pub.retain, isTrue);
+    });
+
+    test('mqtt.subscribe sends SUBSCRIBE without registering a stream',
+        () async {
+      final transport = InMemoryMqttTransport();
+      final adapter = await connected(transport);
+      final r = await adapter.execute(const Command(
+        action: 'mqtt.subscribe',
+        target: 'sensors/+',
+        args: {'qos': 1},
+      ));
+      expect(r.status, CommandStatus.completed);
+      final parsed = transport.parseSent(1);
+      expect(parsed.packetType, MqttPacketType.subscribe);
+      expect(r.result?['filter'], 'sensors/+');
+      expect(r.result?['qos'], 1);
+    });
+
+    test('mqtt.unsubscribe sends UNSUBSCRIBE for the supplied filter',
+        () async {
+      final transport = InMemoryMqttTransport();
+      final adapter = await connected(transport);
+      final r = await adapter.execute(const Command(
+        action: 'mqtt.unsubscribe',
+        target: '',
+        args: {'filter': 'sensors/+'},
+      ));
+      expect(r.status, CommandStatus.completed);
+      final parsed = transport.parseSent(1);
+      expect(parsed.packetType, MqttPacketType.unsubscribe);
+    });
+
+    test('mqtt.set_will stores Will and is included on next CONNECT',
+        () async {
+      final transport = InMemoryMqttTransport();
+      final adapter = MqttAdapter(
+        deviceId: 'broker-1', clientId: 'c', transport: transport,
+      );
+      final r = await adapter.execute(const Command(
+        action: 'mqtt.set_will',
+        target: '',
+        args: {
+          'topic': 'status/c',
+          'payload': 'offline',
+          'qos': 1,
+          'retain': true,
+        },
+      ));
+      expect(r.status, CommandStatus.completed);
+      final fut = adapter.connect();
+      await Future<void>.delayed(Duration.zero);
+      transport.injectIncoming(_connackAccepted());
+      await fut;
+      final connectBytes = Uint8List.fromList(transport.sentPackets[0]);
+      // Verify the encoded CONNECT carries the Will flag bit (variable
+      // header + flags is at fixed offset after protocol name "MQTT" +
+      // level byte). Easier: decode flags from byte index 9 (after 2 bytes
+      // remaining length + 6 bytes "MQTT" + 1 byte level).
+      // Conservative check: the encoded buffer must contain the will topic.
+      final asUtf = utf8.decode(connectBytes, allowMalformed: true);
+      expect(asUtf.contains('status/c'), isTrue);
+      expect(asUtf.contains('offline'), isTrue);
+    });
+
+    test('mqtt.set_will rejected after CONNECT', () async {
+      final transport = InMemoryMqttTransport();
+      final adapter = await connected(transport);
+      final r = await adapter.execute(const Command(
+        action: 'mqtt.set_will',
+        target: '',
+        args: {'topic': 'status/c', 'payload': 'x'},
+      ));
+      expect(r.status, CommandStatus.rejected);
+      expect(r.error?.code, 'exec.invalid_args');
+    });
+
+    test('mqtt.subscribe rejects empty filter', () async {
+      final transport = InMemoryMqttTransport();
+      final adapter = await connected(transport);
+      final r = await adapter.execute(const Command(
+        action: 'mqtt.subscribe', target: '',
+      ));
+      expect(r.status, CommandStatus.rejected);
+      expect(r.error?.code, 'exec.invalid_args');
+    });
+  });
 }
